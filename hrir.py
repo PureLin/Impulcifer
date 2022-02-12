@@ -8,7 +8,7 @@ from scipy import signal, fftpack
 from PIL import Image
 from autoeq.frequency_response import FrequencyResponse
 from impulse_response import ImpulseResponse
-from utils import read_wav, write_wav, magnitude_response, sync_axes
+from utils import read_wav, write_wav, magnitude_response, sync_axes, versus_distance
 from constants import SPEAKER_NAMES, SPEAKER_DELAYS, HEXADECAGONAL_TRACK_ORDER
 
 
@@ -73,9 +73,9 @@ class HRIR:
             for j, column in enumerate(columns):
                 n = int(i // 2 * len(columns) + j)
                 speaker = speakers[n]
-                if speaker not in SPEAKER_NAMES:
-                    # Skip non-standard speakers. Useful for skipping the other sweep in center channel recording.
-                    continue
+                # if speaker not in SPEAKER_NAMES:
+                #     # Skip non-standard speakers. Useful for skipping the other sweep in center channel recording.
+                #     continue
                 if speaker not in self.irs:
                     self.irs[speaker] = dict()
                 if side is None:
@@ -135,6 +135,15 @@ class HRIR:
         # Write to file
         write_wav(file_path, self.fs, irs, bit_depth=bit_depth)
 
+    def write_wav_list(self, file_path, bit_depth=32):
+        # Add all impulse responses to a list and save channel names
+        for speaker, pair in self.irs.items():
+            irs = []
+            for side, ir in pair.items():
+                irs.append(ir.data)
+            irs = np.vstack(irs)
+            write_wav(os.path.join(file_path, speaker + ".wav"), self.fs, irs, bit_depth=bit_depth)
+
     def normalize(self, peak_target=-0.1, avg_target=None):
         """Normalizes output gain to target.
 
@@ -173,6 +182,8 @@ class HRIR:
         else:
             raise ValueError('One and only one of the parameters "peak_target" and "avg_target" must be given!')
 
+        gain /= len(self.irs.items()) / 2
+
         # Scale impulse responses
         for speaker, pair in self.irs.items():
             for ir in pair.values():
@@ -190,7 +201,7 @@ class HRIR:
         if self.fs != self.estimator.fs:
             raise ValueError('Refusing to crop heads because HRIR sampling rate doesn\'t match impulse response '
                              'estimator\'s sampling rate.')
-
+        degree_per_pos = 360 / len(self.irs.items())
         for speaker, pair in self.irs.items():
             # Peaks
             peak_left = pair['left'].peak_index()
@@ -199,11 +210,14 @@ class HRIR:
 
             # Speaker channel delay
             head = head_ms * self.fs // 1000
-            delay = int(np.round(SPEAKER_DELAYS[speaker] * self.fs)) + head  # Channel delay in samples
+            direction = 180 - int(speaker) * degree_per_pos
+            left_right = 'L' if direction > 0 else 'R'
+            distance = versus_distance(angle=abs(direction), ear='primary')[1]
+            delay = int(np.round(distance * self.fs)) + head  # Channel delay in samples
 
             if peak_left < peak_right:
                 # Delay to left ear is smaller, this is must left side speaker
-                if speaker[1] == 'R':
+                if left_right == 'R':
                     # Speaker name indicates this is right side speaker but delay to left ear is smaller than to right.
                     # There is something wrong with the measurement
                     warnings.warn(f'Warning: {speaker} measurement has lower delay to left ear than to right ear. '
@@ -217,7 +231,7 @@ class HRIR:
                 pair['right'].data = pair['right'].data[peak_left - delay:]
             else:
                 # Delay to right ear is smaller, this is must right side speaker
-                if speaker[1] == 'L':
+                if left_right == 'L':
                     # Speaker name indicates this is left side speaker but delay to right ear is smaller than to left.
                     # There si something wrong with the measurement
                     warnings.warn(f'Warning: {speaker} measurement has lower delay to right ear than to left ear. '

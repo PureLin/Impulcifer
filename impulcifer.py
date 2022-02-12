@@ -41,6 +41,8 @@ def main(dir_path=None,
 
     # Dir path as absolute
     dir_path = os.path.abspath(dir_path)
+    os.makedirs(os.path.join(dir_path, 'result'), exist_ok=True)
+    os.makedirs(os.path.join(dir_path, 'result\\plots'), exist_ok=True)
 
     # Impulse response estimator
     print('Creating impulse response estimator...')
@@ -81,13 +83,12 @@ def main(dir_path=None,
     hrir = open_binaural_measurements(estimator, dir_path)
 
     # Write info and stats in readme
-    write_readme(os.path.join(dir_path, 'README.md'), hrir, fs)
+    write_readme(os.path.join(dir_path, 'result/README.md'), hrir, fs)
 
     if plot:
         # Plot graphs pre processing
-        os.makedirs(os.path.join(dir_path, 'plots', 'pre'), exist_ok=True)
         print('Plotting BRIR graphs before processing...')
-        hrir.plot(dir_path=os.path.join(dir_path, 'plots', 'pre'))
+        hrir.plot(dir_path=os.path.join(dir_path, 'result\\plots', 'pre'))
 
     # Crop noise and harmonics from the beginning
     print('Cropping impulse responses...')
@@ -97,7 +98,7 @@ def main(dir_path=None,
     hrir.crop_tails()
 
     # Write multi-channel WAV file with sine sweeps for debugging
-    hrir.write_wav(os.path.join(dir_path, 'responses.wav'))
+    hrir.write_wav(os.path.join(dir_path, 'result\\all-speaker-responses.wav'))
 
     # Equalize all
     if do_headphone_compensation or do_room_correction or do_equalization:
@@ -159,24 +160,27 @@ def main(dir_path=None,
             for side, ir in pair.items():
                 ir.recording = ir.convolve(estimator.test_signal)
         # Plot post processing
-        hrir.plot(os.path.join(dir_path, 'plots', 'post'))
+        hrir.plot(os.path.join(dir_path, 'result\\plots', 'post'))
 
     # Plot results, always
     print('Plotting results...')
-    hrir.plot_result(os.path.join(dir_path, 'plots'))
+    hrir.plot_result(os.path.join(dir_path, 'result\\plots'))
 
-    # Re-sample
-    if fs is not None and fs != hrir.fs:
-        print(f'Resampling BRIR to {fs} Hz')
-        hrir.resample(fs)
-        hrir.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
+    sample_rates = [44100, 48000, 88200, 96000]
 
-    # Write multi-channel WAV file with standard track order
-    print('Writing BRIRs...')
-    hrir.write_wav(os.path.join(dir_path, 'hrir.wav'))
-
-    # Write multi-channel WAV file with HeSuVi track order
-    hrir.write_wav(os.path.join(dir_path, 'hesuvi.wav'), track_order=HESUVI_TRACK_ORDER)
+    for s in sample_rates:
+        if hrir.fs == s:
+            hrir_result = hrir
+        else:
+            hrir_result = hrir.copy()
+            # Re-sample
+            hrir_result.resample(s)
+            hrir_result.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
+        # Write multi-channel WAV file with standard track order
+        print(f'Writing BRIRs @ {s}Hz ...')
+        result_path = os.path.join(dir_path, 'result', str(int(s / 1000)))
+        os.makedirs(result_path, exist_ok=True)
+        hrir_result.write_wav_list(result_path)
 
 
 def open_impulse_response_estimator(dir_path, file_path=None):
@@ -278,7 +282,7 @@ def headphone_compensation(estimator, dir_path):
     # Read WAV file
     hp_irs = HRIR(estimator)
     hp_irs.open_recording(os.path.join(dir_path, 'headphones.wav'), speakers=['FL', 'FR'])
-    hp_irs.write_wav(os.path.join(dir_path, 'headphone-responses.wav'))
+    hp_irs.write_wav(os.path.join(dir_path, 'result\\headphone-responses.wav'))
 
     # Frequency responses
     left = hp_irs.irs['FL']['left'].frequency_response()
@@ -335,7 +339,7 @@ def headphone_compensation(estimator, dir_path):
     ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:.0f}'))
 
     # Save headphone plots
-    file_path = os.path.join(dir_path, 'plots', 'headphones.png')
+    file_path = os.path.join(dir_path, 'result\\plots', 'headphones.png')
     os.makedirs(os.path.split(file_path)[0], exist_ok=True)
     save_fig_as_png(file_path, fig)
     plt.close(fig)
@@ -376,14 +380,17 @@ def open_binaural_measurements(estimator, dir_path):
         HRIR instance
     """
     hrir = HRIR(estimator)
-    pattern = r'^{pattern}\.wav$'.format(pattern=SPEAKER_LIST_PATTERN)  # FL,FR.wav
-    for file_name in [f for f in os.listdir(dir_path) if re.match(pattern, f)]:
-        # Read the speaker names from the file name into a list
-        speakers = re.search(SPEAKER_LIST_PATTERN, file_name)[0].split(',')
-        # Form absolute path
-        file_path = os.path.join(dir_path, file_name)
-        # Open the file and add tracks to HRIR
-        hrir.open_recording(file_path, speakers=speakers)
+    pattern = r'.*\.wav$'
+    indexPattern = r"[0-9]+"
+    for file_name in [f for f in os.listdir(dir_path)]:
+        if re.match(pattern, file_name):
+            # Read the speaker names from the file name into a list
+            speakers = re.search(indexPattern, file_name)
+            if speakers is not None and len(speakers[0]) > 0:
+                # Form absolute path
+                file_path = os.path.join(dir_path, file_name)
+                # Open the file and add tracks to HRIR
+                hrir.open_recording(file_path, speakers=[speakers[0]])
     if len(hrir.irs) == 0:
         raise ValueError('No HRIR recordings found in the directory.')
     return hrir
@@ -406,13 +413,14 @@ def write_readme(file_path, hrir, fs):
     rt_name = 'Reverb'
     rt = None
     table = []
-    speaker_names = sorted(hrir.irs.keys(), key=lambda x: SPEAKER_NAMES.index(x))
+    speaker_names = sorted(hrir.irs.keys())
     for speaker in speaker_names:
         pair = hrir.irs[speaker]
         itd = np.abs(pair['right'].peak_index() - pair['left'].peak_index()) / hrir.fs * 1e6
+        itdLR = 'left' if pair['right'].peak_index() - pair['left'].peak_index() > 0 else 'right'
         for side, ir in pair.items():
             # Zero for the first ear
-            _itd = itd if side == 'left' and speaker[1] == 'R' or side == 'right' and speaker[1] == 'L' else 0.0
+            _itd = itd if side == itdLR else 0.0
             # Use the largest decay time parameter available
             peak_ind, knee_point_ind, noise_floor, window_size = ir.decay_params()
             edt, rt20, rt30, rt60 = ir.decay_times(peak_ind, knee_point_ind, noise_floor, window_size)
