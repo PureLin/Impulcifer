@@ -166,7 +166,8 @@ def main(dir_path=None,
     print('Plotting results...')
     hrir.plot_result(os.path.join(dir_path, 'result\\plots'))
 
-    sample_rates = [44100, 48000, 88200, 96000]
+    #sample_rates = [44100, 48000, 88200, 96000]
+    sample_rates = [48000]
 
     for s in sample_rates:
         if hrir.fs == s:
