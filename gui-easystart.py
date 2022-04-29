@@ -1,4 +1,4 @@
-import os
+import os, shutil
 import tkinter
 import re
 from tkinter import *
@@ -218,6 +218,13 @@ pack(play_entry)
 pack(Button(canvas1, text='...', command=lambda: openfile(play, (('Audio files', '*.wav'), ('All files', '*.*')))),
      samerow=True)
 
+pack(Label(canvas1, text='Headphone File to play'))
+hp_play = StringVar(value=os.path.join('data', 'sweep-seg-FL,FR-stereo-6.15s-48000Hz-32bit-2.93Hz-24000Hz.wav'))
+hp_play_entry = Entry(canvas1, textvariable=hp_play, width=70)
+pack(hp_play_entry)
+pack(Button(canvas1, text='...', command=lambda: openfile(hp_play, (('Audio files', '*.wav'), ('All files', '*.*')))),
+     samerow=True)
+
 # output file
 pack(Label(canvas1, text='Record directory'))
 record = StringVar(value=os.path.join('temp'))
@@ -225,35 +232,67 @@ record_entry = Entry(canvas1, textvariable=record, width=70)
 pack(record_entry)
 pack(Button(canvas1, text='...', command=lambda: opendir(record)), samerow=True)
 
-record_number = 0
-
 
 # record button
 def recordaction():
-    global record_number
     main_button.config(state='disabled')
-    reset_button.config(state='disabled')
-    recorder.play_and_record(play=play_entry.get(), record=record_entry.get() + "/" + str(record_number) + ".wav",
+    recorder.play_and_record(play=play_entry.get(),
+                             record=record_entry.get() + "/" + str(layer.get()) + "/" + str(position.get()) + ".wav",
                              input_device=input_device.get(),
                              output_device=output_device.get(), host_api=host_api.get(),
-                             channels=1, append=False)
-    record_number += 1
-    main_button.config(text='Record ' + str(record_number), state='normal')
-    reset_button.config(state='normal')
+                             channels=2, append=False)
+    posVar.set((posVar.get() + 1) % 12)
+    if posVar.get() == 0:
+        layVar.set((layVar.get() + 1) % 5)
+    main_button.config(state='normal')
+
+
+def record_headphones():
+    headphones.config(state='disabled')
+    recorder.play_and_record(play=hp_play_entry.get(),
+                             record=record_entry.get() + "/headphones.wav",
+                             input_device=input_device.get(),
+                             output_device=output_device.get(), host_api=host_api.get(),
+                             channels=2, append=False)
+    headphones.config(state='normal')
 
 
 # record button
-def reset():
-    global record_number
-    record_number = 0
-    main_button.config(text='Record ' + str(record_number))
+def start_impulcifer():
+    temp_dir = record_entry.get()
+    if not os.path.exists(temp_dir + "/headphones.wav"):
+        errorLabel.config(text="headphones.wav not exist")
+        return
+    if not os.path.exists(temp_dir + "/test.wav"):
+        errorLabel.config(text="test.wav not exist")
+        return
+    for i in range(0, 4):
+        if os.path.exists(temp_dir + "/" + str(i)):
+            shutil.copyfile(temp_dir + "/headphones.wav", temp_dir + "/" + str(i) + "/headphones.wav")
+            shutil.copyfile(temp_dir + "/test.wav", temp_dir + "/" + str(i) + "/test.wav")
+            impulcifer.main(temp_dir + "/" + str(i))
 
 
-main_button = Button(canvas1, text='Record ' + str(record_number), command=recordaction)
+pack(Label(canvas1, text='Position'))
+posVar = IntVar()
+posVar.set(0)
+position = Spinbox(canvas1, textvariable=posVar, from_=0, to=11)
+pack(position, True)
+pack(Label(canvas1, text='Layer'), True)
+layVar = IntVar()
+layVar.set(2)
+layer = Spinbox(canvas1, textvariable=layVar, from_=0, to=4)
+pack(layer, True)
+
+main_button = Button(canvas1, text='Record ', command=recordaction)
 pack(main_button)
+headphones = Button(canvas1, text='Record headphones', command=record_headphones)
+pack(headphones, True)
 
-reset_button = Button(canvas1, text='Reset', command=reset)
-pack(reset_button)
+impulcifer_button = Button(canvas1, text='impulcifer', command=start_impulcifer)
+pack(impulcifer_button)
+errorLabel = Label(canvas1, text="")
+pack(errorLabel, True)
 
 refresh1(init=True)
 root.geometry(str(maxwidth) + 'x' + str(maxheight) + '+0+0')
