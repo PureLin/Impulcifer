@@ -1,48 +1,17 @@
 # -*- coding: utf-8 -*-
 
+import argparse
 import os
 import re
-import sounddevice as sd
-from utils import read_wav, write_wav
+
 import numpy as np
-from threading import Thread
-import argparse
+import sounddevice as sd
+
+from utils import read_wav, write_wav
 
 
 class DeviceNotFoundError(Exception):
     pass
-
-
-def record_target(file_path, length, fs, channels=2, append=False):
-    """Records audio and writes it to a file.
-
-    Args:
-        file_path: Path to output file
-        length: Audio recording length in samples
-        fs: Sampling rate
-        channels: Number of channels in the recording
-        append: Add track(s) to an existing file? Silence will be added to end of each track to make all equal in
-                length
-
-    Returns:
-        None
-    """
-    recording = sd.rec(length, samplerate=fs, channels=channels, blocking=True)
-    recording = np.transpose(recording)
-    max_gain = 20 * np.log10(np.max(np.abs(recording)))
-    if append and os.path.isfile(file_path):
-        # Adding to existing file, read the file
-        _fs, data = read_wav(file_path, expand=True)
-        # Zero pad shorter to the length of the longer
-        if recording.shape[1] > data.shape[1]:
-            n = recording.shape[1] - data.shape[1]
-            data = np.pad(data, [(0, 0), (0, n)])
-        elif data.shape[1] > recording.shape[1]:
-            recording = np.pad(data, [(0, 0), (0, data.shape[1] - recording.shape[1])])
-        # Add recording to the end of the existing data
-        recording = np.vstack([data, recording])
-    write_wav(file_path, fs, recording)
-    print(f'Headroom: {-1.0*max_gain:.1f} dB')
 
 
 def get_host_api_names():
@@ -160,10 +129,17 @@ def set_default_devices(input_device, output_device):
         - Input device name and host API as string
         - Output device name and host API as string
     """
+    inputIndex = 0
+    outputIndex = 0
+    for index, device in enumerate(sd.query_devices()):
+        if device['name'] == input_device['name'] and device['hostapi'] == input_device['hostapi']:
+            inputIndex = index
+        if device['name'] == output_device['name'] and device['hostapi'] == output_device['hostapi']:
+            outputIndex = index
+    sd.default.device = (inputIndex, outputIndex)
     host_api_names = get_host_api_names()
     input_device_str = f'{input_device["name"]} {host_api_names[input_device["hostapi"]]}'
     output_device_str = f'{output_device["name"]} {host_api_names[output_device["hostapi"]]}'
-    sd.default.device = (input_device_str, output_device_str)
     return input_device_str, output_device_str
 
 
@@ -173,8 +149,8 @@ def play_and_record(
         input_device=None,
         output_device=None,
         host_api=None,
-        channels=2,
-        append=False):
+        input_mapping=None,
+        output_mapping=None):
     """Plays one file and records another at the same time
 
     Args:
@@ -210,13 +186,12 @@ def play_and_record(
     print(f'Input device:  "{input_device_str}"')
     print(f'Output device: "{output_device_str}"')
 
-    recorder = Thread(
-        target=record_target,
-        args=(record, data.shape[1], fs),
-        kwargs={'channels': channels, 'append': append}
-    )
-    recorder.start()
-    sd.play(np.transpose(data), samplerate=fs, blocking=True)
+    recording = sd.playrec(np.transpose(data), input_mapping=input_mapping,
+                           output_mapping=output_mapping, blocking=True, samplerate=fs)
+    recording = np.transpose(recording)
+    max_gain = 20 * np.log10(np.max(np.abs(recording)))
+    write_wav(record, fs, recording)
+    print(f'Headroom: {-1.0 * max_gain:.1f} dB')
 
 
 def create_cli():

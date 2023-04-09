@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
 import warnings
 import numpy as np
 import matplotlib.pyplot as plt
@@ -28,7 +29,7 @@ class HRIR:
             }
         return hrir
 
-    def open_recording(self, file_path, speakers, side=None, silence_length=2.0):
+    def open_recording(self, file_path, speakers, silence_length=2.0):
         """Open combined recording and splits it into separate speaker-ear pairs.
 
         Args:
@@ -201,53 +202,22 @@ class HRIR:
         if self.fs != self.estimator.fs:
             raise ValueError('Refusing to crop heads because HRIR sampling rate doesn\'t match impulse response '
                              'estimator\'s sampling rate.')
-        degree_per_pos = 360 / len(self.irs.items())
+        head = head_ms * self.fs // 1000
+        blank = 20 * self.fs
         for speaker, pair in self.irs.items():
-            # Peaks
             peak_left = pair['left'].peak_index()
             peak_right = pair['right'].peak_index()
-            itd = np.abs(peak_left - peak_right) / self.fs
-
-            # Speaker channel delay
-            head = head_ms * self.fs // 1000
-            direction = 180 - int(speaker) * degree_per_pos
-            left_right = 'L' if direction > 0 else 'R'
-            distance = versus_distance(angle=abs(direction), ear='primary')[1]
-            delay = int(np.round(distance * self.fs)) + head  # Channel delay in samples
-
-            if peak_left < peak_right:
-                # Delay to left ear is smaller, this is must left side speaker
-                if left_right == 'R':
-                    # Speaker name indicates this is right side speaker but delay to left ear is smaller than to right.
-                    # There is something wrong with the measurement
-                    warnings.warn(f'Warning: {speaker} measurement has lower delay to left ear than to right ear. '
-                                  f'{speaker} should be at the right side of the head so the sound should arrive first '
-                                  f'in the right ear. This is usually a problem with the measurement process or the '
-                                  f'speaker order given is not correct. Detected delay difference is '
-                                  f'{itd * 1000:.4f} milliseconds.')
-                # Crop out silence from the beginning, only required channel delay remains
-                # Secondary ear has additional delay for inter aural time difference
-                pair['left'].data = pair['left'].data[peak_left - delay:]
-                pair['right'].data = pair['right'].data[peak_left - delay:]
-            else:
-                # Delay to right ear is smaller, this is must right side speaker
-                if left_right == 'L':
-                    # Speaker name indicates this is left side speaker but delay to right ear is smaller than to left.
-                    # There si something wrong with the measurement
-                    warnings.warn(f'Warning: {speaker} measurement has lower delay to right ear than to left ear. '
-                                  f'{speaker} should be at the left side of the head so the sound should arrive first '
-                                  f'in the left ear. This is usually a problem with the measurement process or the '
-                                  f'speaker order given is not correct. Detected delay difference is '
-                                  f'{itd * 1000:.4f} milliseconds.')
-                # Crop out silence from the beginning, only required channel delay remains
-                # Secondary ear has additional delay for inter aural time difference
-                pair['right'].data = pair['right'].data[peak_right - delay:]
-                pair['left'].data = pair['left'].data[peak_right - delay:]
-
-            # Make sure impulse response starts from silence
-            window = signal.hanning(head * 2)[:head]
-            pair['left'].data[:head] *= window
-            pair['right'].data[:head] *= window
+            blank = min(peak_left - head, peak_right - head)
+        for speaker, pair in self.irs.items():
+            pair['left'].data = pair['left'].data[blank:]
+            pair['right'].data = pair['right'].data[blank:]
+            start_windows = signal.hanning(head * 2)[:head]
+            peak_left = pair['left'].peak_index()
+            peak_right = pair['right'].peak_index()
+            pair['left'].data[:peak_left - head] *= 0
+            pair['right'].data[:peak_right - head] *= 0
+            pair['left'].data[peak_left - head:peak_left] *= start_windows
+            pair['right'].data[peak_right - head:peak_right] *= start_windows
 
     def crop_tails(self):
         """Crops out tails after every impulse response has decayed to noise floor."""

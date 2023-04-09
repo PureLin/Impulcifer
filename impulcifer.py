@@ -32,7 +32,7 @@ def main(dir_path=None,
          bass_boost_fc=105,
          bass_boost_q=0.76,
          tilt=0.0,
-         do_room_correction=True,
+         do_room_correction=False,
          do_headphone_compensation=True,
          do_equalization=True):
     """"""
@@ -81,9 +81,6 @@ def main(dir_path=None,
     # HRIR measurements
     print('Opening binaural measurements...')
     hrir = open_binaural_measurements(estimator, dir_path)
-
-    # Write info and stats in readme
-    write_readme(os.path.join(dir_path, 'result/README.md'), hrir, fs)
 
     if plot:
         # Plot graphs pre processing
@@ -166,7 +163,7 @@ def main(dir_path=None,
     print('Plotting results...')
     hrir.plot_result(os.path.join(dir_path, 'result\\plots'))
 
-    #sample_rates = [44100, 48000, 88200, 96000]
+    # sample_rates = [44100, 48000, 88200, 96000]
     sample_rates = [48000]
 
     for s in sample_rates:
@@ -182,6 +179,8 @@ def main(dir_path=None,
         result_path = os.path.join(dir_path, 'result', str(int(s / 1000)))
         os.makedirs(result_path, exist_ok=True)
         hrir_result.write_wav_list(result_path)
+
+    print(f'Finish!')
 
 
 def open_impulse_response_estimator(dir_path, file_path=None):
@@ -382,7 +381,7 @@ def open_binaural_measurements(estimator, dir_path):
     """
     hrir = HRIR(estimator)
     pattern = r'.*\.wav$'
-    indexPattern = r"[0-9]+"
+    indexPattern = r"[0-9,.]+"
     for file_name in [f for f in os.listdir(dir_path)]:
         if re.match(pattern, file_name):
             # Read the speaker names from the file name into a list

@@ -160,8 +160,8 @@ def refresh1(init=False):
 
     if not host_apis:
         host_api.set('')
-    elif init and 'Windows DirectSound' in host_apis.values():
-        host_api.set('Windows DirectSound')
+    elif init and 'ASIO' in host_apis.values():
+        host_api.set('ASIO')
     elif host_api.get() not in host_apis.values():
         host_api.set(host_apis[0])
 
@@ -171,7 +171,7 @@ def refresh1(init=False):
         if host_apis[device['hostapi']] == host_api.get():
             if device['max_output_channels'] > 0:
                 output_devices.append(device['name'])
-            elif device['max_input_channels'] > 0:
+            if device['max_input_channels'] > 0:
                 input_devices.append(device['name'])
     output_device_optionmenu['menu'].delete(0, 'end')
     input_device_optionmenu['menu'].delete(0, 'end')
@@ -232,29 +232,52 @@ record_entry = Entry(canvas1, textvariable=record, width=70)
 pack(record_entry)
 pack(Button(canvas1, text='...', command=lambda: opendir(record)), samerow=True)
 
+pack(Label(canvas1, text='SpeakerOutputChannel'))
+speakerVar = IntVar()
+speakerVar.set(1)
+speaker = Spinbox(canvas1, textvariable=speakerVar, from_=1, to=16)
+pack(speaker, True)
+pack(Label(canvas1, text='HeadphoneOutputChannel'), True)
+speakerVar2 = IntVar()
+speakerVar2.set(1)
+speaker2 = Spinbox(canvas1, textvariable=speakerVar2, from_=1, to=16)
+pack(speaker2, True)
+pack(Label(canvas1, text='InputChannel'), True)
+inputVar = IntVar()
+inputVar.set(1)
+input1 = Spinbox(canvas1, textvariable=inputVar, from_=1, to=16)
+pack(input1, True)
+
 
 # record button
 def recordaction():
     main_button.config(state='disabled')
-    recorder.play_and_record(play=play_entry.get(),
+    try:
+        recorder.play_and_record(play=play_entry.get(),
                              record=record_entry.get() + "/" + str(layer.get()) + "/" + str(position.get()) + ".wav",
                              input_device=input_device.get(),
-                             output_device=output_device.get(), host_api=host_api.get(),
-                             channels=2, append=False)
-    posVar.set((posVar.get() + 1) % 12)
-    if posVar.get() == 0:
-        layVar.set((layVar.get() + 1) % 5)
-    main_button.config(state='normal')
+                             output_device=output_device.get(),
+                             host_api=host_api.get(),
+                             output_mapping=[speakerVar.get(), speakerVar.get() + 1],
+                             input_mapping=[inputVar.get(), inputVar.get() + 1])
+        posVar.set((posVar.get() + 1) % 12)
+        if posVar.get() == 0:
+            layVar.set((layVar.get() + 1) % 5)
+    finally:
+        main_button.config(state='normal')
 
 
 def record_headphones():
     headphones.config(state='disabled')
-    recorder.play_and_record(play=hp_play_entry.get(),
+    try:
+        recorder.play_and_record(play=hp_play_entry.get(),
                              record=record_entry.get() + "/headphones.wav",
                              input_device=input_device.get(),
                              output_device=output_device.get(), host_api=host_api.get(),
-                             channels=2, append=False)
-    headphones.config(state='normal')
+                             output_mapping=[speakerVar2.get(), speakerVar2.get() + 1],
+                             input_mapping=[inputVar.get(), inputVar.get() + 1])
+    finally:
+        headphones.config(state='normal')
 
 
 # record button
@@ -266,7 +289,7 @@ def start_impulcifer():
     if not os.path.exists(temp_dir + "/test.wav"):
         errorLabel.config(text="test.wav not exist")
         return
-    for i in range(0, 4):
+    for i in range(0, 5):
         if os.path.exists(temp_dir + "/" + str(i)):
             shutil.copyfile(temp_dir + "/headphones.wav", temp_dir + "/" + str(i) + "/headphones.wav")
             shutil.copyfile(temp_dir + "/test.wav", temp_dir + "/" + str(i) + "/test.wav")
