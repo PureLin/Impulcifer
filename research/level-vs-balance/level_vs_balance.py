@@ -23,7 +23,7 @@ def main():
 
     for group in ['volume2', 'volume2-48-52', 'objective2', 'None']:
         fig, ax = plt.subplots()
-        fig.set_size_inches(12, 9)
+        fig.set_size_inches(12*4, 9*4)
         config_fr_axis(ax)
         ax.set_title(group)
 

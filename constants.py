@@ -55,3 +55,5 @@ HESUVI_TRACK_ORDER = ['FL-left', 'FL-right', 'SL-left', 'SL-right', 'BL-left', '
 HEXADECAGONAL_TRACK_ORDER = ['FL-left', 'FL-right', 'FR-left', 'FR-right', 'FC-left', 'FC-right', 'LFE-left',
                              'LFE-right', 'BL-left', 'BL-right', 'BR-left', 'BR-right', 'SL-left', 'SL-right',
                              'SR-left', 'SR-right']
+
+HEADPHONE_TRACK_ORDER = ['FL-left', 'FL-right', 'FR-left', 'FR-right']

@@ -1,47 +1,41 @@
 # -*- coding: utf-8 -*-
-import math
+
 import os
-import sys
-import warnings
-import numpy as np
+
 import matplotlib.pyplot as plt
-from scipy import signal, fftpack
+import numpy as np
 from PIL import Image
 from autoeq.frequency_response import FrequencyResponse
+from scipy import signal, fftpack
+
+from constants import HEXADECAGONAL_TRACK_ORDER
 from impulse_response import ImpulseResponse
-from utils import read_wav, write_wav, magnitude_response, sync_axes, versus_distance
-from constants import SPEAKER_NAMES, SPEAKER_DELAYS, HEXADECAGONAL_TRACK_ORDER
-from scipy.signal.windows import hann
+from utils import read_wav, write_wav, magnitude_response, sync_axes
 
 
 class HRIR:
     def __init__(self, estimator):
         self.estimator = estimator
         self.fs = self.estimator.fs
-        self.irs = dict()
+        self.irs_l = dict()
+        self.irs_r = dict()
 
     def copy(self):
         hrir = HRIR(self.estimator)
         hrir.irs = dict()
-        for speaker, pair in self.irs.items():
-            hrir.irs[speaker] = {
+        for speaker, pair in self.irs_l.items():
+            hrir.irs_l[speaker] = {
+                'left': pair['left'].copy(),
+                'right': pair['right'].copy()
+            }
+        for speaker, pair in self.irs_r.items():
+            hrir.irs_r[speaker] = {
                 'left': pair['left'].copy(),
                 'right': pair['right'].copy()
             }
         return hrir
 
-    def open_recording(self, file_path, speakers, side=None, silence_length=1.0, use_reference=False):
-        """Open combined recording and splits it into separate speaker-ear pairs.
-
-        Args:
-            file_path: Path to recording file.
-            speakers: Sequence of recorded speakers.
-            side: Which side (ear) tracks are contained in the file if only one. "left" or "right" or None for both.
-            silence_length: Length of silence used during recording in seconds.
-
-        Returns:
-            None
-        """
+    def open_recording(self, file_path, speaker, silence_length=1.0):
         if self.fs != self.estimator.fs:
             raise ValueError('Refusing to open recording because HRIR\'s sampling rate doesn\'t match impulse response '
                              'estimator\'s sampling rate.')
@@ -54,47 +48,49 @@ class HRIR:
             raise ValueError('Silence length must produce full samples with given sampling rate.')
         silence_length = int(silence_length * self.fs)
 
-        tracks_k = 3 if use_reference else 2
-
-        # Number of speakers in each track
-        n_columns = round(len(speakers) / (recording.shape[0] // tracks_k))
-
         # Crop out initial silence
         recording = recording[:, silence_length:]
 
         # Split sections in time to columns
         columns = []
         column_size = silence_length + len(self.estimator)
-        for i in range(n_columns):
+        for i in range(2):
             columns.append(recording[:, i * column_size:(i + 1) * column_size])
 
-        # Split each track by columns
-        i = 0
-        for j, column in enumerate(columns):
-            n = int(i // 2 * len(columns) + j)
-            speaker = speakers[n]
-            # if speaker not in SPEAKER_NAMES:
-            #     # Skip non-standard speakers. Useful for skipping the other sweep in center channel recording.
-            #     continue
-            if speaker not in self.irs:
-                self.irs[speaker] = dict()
-            # Left first, right then
-            self.irs[speaker]['left'] = ImpulseResponse(
-                self.estimator.estimate(column[i, :]),
-                self.fs,
-                column[i, :]
-            )
-            self.irs[speaker]['right'] = ImpulseResponse(
-                self.estimator.estimate(column[i + 1, :]),
-                self.fs,
-                column[i + 1, :]
-            )
-            if use_reference:
-                self.irs[speaker]['refer'] = ImpulseResponse(
-                    self.estimator.estimate(column[i, :]),
-                    self.fs,
-                    column[i, :]
-                )
+        if speaker not in self.irs_l:
+            self.irs_l[speaker] = dict()
+        if speaker not in self.irs_r:
+            self.irs_r[speaker] = dict()
+        self.irs_l[speaker]['left'] = ImpulseResponse(
+            self.estimator.estimate(columns[0][0, :]),
+            self.fs,
+            columns[0][0, :]
+        )
+        self.irs_l[speaker]['right'] = ImpulseResponse(
+            self.estimator.estimate(columns[0][1, :]),
+            self.fs,
+            columns[0][1, :]
+        )
+        self.irs_l[speaker]['refer'] = ImpulseResponse(
+            self.estimator.estimate(columns[0][2, :]),
+            self.fs,
+            columns[0][2, :]
+        )
+        self.irs_r[speaker]['left'] = ImpulseResponse(
+            self.estimator.estimate(columns[1][0, :]),
+            self.fs,
+            columns[1][0, :]
+        )
+        self.irs_r[speaker]['right'] = ImpulseResponse(
+            self.estimator.estimate(columns[1][1, :]),
+            self.fs,
+            columns[1][1, :]
+        )
+        self.irs_r[speaker]['refer'] = ImpulseResponse(
+            self.estimator.estimate(columns[1][2, :]),
+            self.fs,
+            columns[1][2, :]
+        )
 
     def write_wav(self, file_path, track_order=None, bit_depth=32):
         """Writes impulse responses to a WAV file
@@ -134,12 +130,18 @@ class HRIR:
 
     def write_wav_list(self, file_path, bit_depth=32):
         # Add all impulse responses to a list and save channel names
-        for speaker, pair in self.irs.items():
+        for speaker, pair in self.irs_l.items():
             irs = []
             for side, ir in pair.items():
                 irs.append(ir.data)
             irs = np.vstack(irs)
-            write_wav(os.path.join(file_path, speaker + ".wav"), self.fs, irs, bit_depth=bit_depth)
+            write_wav(os.path.join(file_path, "L", speaker + ".wav"), self.fs, irs, bit_depth=bit_depth)
+        for speaker, pair in self.irs_r.items():
+            irs = []
+            for side, ir in pair.items():
+                irs.append(ir.data)
+            irs = np.vstack(irs)
+            write_wav(os.path.join(file_path, "R", speaker + ".wav"), self.fs, irs, bit_depth=bit_depth)
 
     def normalize(self, peak_target=-0.1, avg_target=None):
         """Normalizes output gain to target.
@@ -186,11 +188,14 @@ class HRIR:
             for ir in pair.values():
                 ir.data *= 10 ** (gain / 20)
 
-    def crop_heads(self, use_reference=False, head_ms=1):
-        """Crops heads of impulse responses
+    def crop_heads_for_each(self, irs):
+        for speaker, pair in irs.items():
+            peak_refer = pair['refer'].peak_index()
+            pair['left'].data = pair['left'].data[peak_refer:]
+            pair['right'].data = pair['right'].data[peak_refer:]
 
-        Args:
-            head_ms: Milliseconds of head room in the beginning before impulse response max which will not be cropped
+    def crop_heads(self):
+        """Crops heads of impulse responses
 
         Returns:
             None
@@ -198,53 +203,13 @@ class HRIR:
         if self.fs != self.estimator.fs:
             raise ValueError('Refusing to crop heads because HRIR sampling rate doesn\'t match impulse response '
                              'estimator\'s sampling rate.')
-        head = head_ms * self.fs // 1000
-        peak_avg = {}
-        if use_reference:
-            for speaker, pair in self.irs.items():
-                peak_refer = pair['refer'].peak_index()
-                pair['left'].data = pair['left'].data[peak_refer:]
-                pair['right'].data = pair['right'].data[peak_refer:]
-                peak_left = pair['left'].peak_index()
-                peak_right = pair['right'].peak_index()
-                peak_avg[speaker] = math.sqrt(pair['left'].data[peak_left] ** 2 + pair['right'].data[peak_right] ** 2)
-                start_window = hann(head * 2)[:head]
-                pair['left'].data[:peak_left - head] *= 0
-                pair['right'].data[:peak_right - head] *= 0
-                pair['left'].data[peak_left - head:peak_left] *= start_window
-                pair['right'].data[peak_right - head:peak_right] *= start_window
-                del pair['refer']
-        else:
-            blank = 20 * self.fs
-            for speaker, pair in self.irs.items():
-                peak_left = pair['left'].peak_index()
-                peak_right = pair['right'].peak_index()
-                blank = min(peak_left - head, peak_right - head, blank)
-            for speaker, pair in self.irs.items():
-                pair['left'].data = pair['left'].data[blank:]
-                pair['right'].data = pair['right'].data[blank:]
-                start_windows = hann(head * 2)[:head]
-                peak_left = pair['left'].peak_index()
-                peak_right = pair['right'].peak_index()
-                peak_avg[speaker] = math.sqrt(pair['left'].data[peak_left] ** 2 + pair['right'].data[peak_right] ** 2)
-                pair['left'].data[:peak_left - head] *= 0
-                pair['right'].data[:peak_right - head] *= 0
-                pair['left'].data[peak_left - head:peak_left] *= start_windows
-                pair['right'].data[peak_right - head:peak_right] *= start_windows
-        # normalize each speaker to peak average
-        # for speaker, pair in self.irs.items():
-        #     pair['left'].data /= peak_avg[speaker]
-        #     pair['right'].data /= peak_avg[speaker]
+        self.crop_heads_for_each(self.irs_l)
+        self.crop_heads_for_each(self.irs_r)
 
-    def crop_tails(self):
-        """Crops out tails after every impulse response has decayed to noise floor."""
-        if self.fs != self.estimator.fs:
-            raise ValueError('Refusing to crop tails because HRIR\'s sampling rate doesn\'t match impulse response '
-                             'estimator\'s sampling rate.')
-        # Find indices after which there is only noise in each track
+    def crop_tails_for_each(self, irs):
         tail_indices = []
         lengths = []
-        for speaker, pair in self.irs.items():
+        for speaker, pair in irs.items():
             for side, ir in pair.items():
                 _, tail_ind, _, _ = ir.decay_params()
                 tail_indices.append(tail_ind)
@@ -253,13 +218,22 @@ class HRIR:
         # Crop all tracks by last tail index
         seconds_per_octave = len(self.estimator) / self.estimator.fs / self.estimator.n_octaves
         fade_out = 2 * int(self.fs * seconds_per_octave * (1 / 24))  # Duration of 1/24 octave in the sweep
-        window = hann(fade_out)[fade_out // 2:]
+        window = signal.hanning(fade_out)[fade_out // 2:]
         fft_len = fftpack.next_fast_len(max(tail_indices))
         tail_ind = min(np.min(lengths), fft_len)
-        for speaker, pair in self.irs.items():
+        for speaker, pair in irs.items():
             for ir in pair.values():
                 ir.data = ir.data[:tail_ind]
                 ir.data *= np.concatenate([np.ones(len(ir.data) - len(window)), window])
+
+    def crop_tails(self):
+        """Crops out tails after every impulse response has decayed to noise floor."""
+        if self.fs != self.estimator.fs:
+            raise ValueError('Refusing to crop tails because HRIR\'s sampling rate doesn\'t match impulse response '
+                             'estimator\'s sampling rate.')
+        # Find indices after which there is only noise in each track
+        self.crop_tails_for_each(self.irs_l)
+        self.crop_tails_for_each(self.irs_r)
 
     def channel_balance_firs(self, left_fr, right_fr, method):
         """Creates FIR filters for correcting channel balance
@@ -410,66 +384,7 @@ class HRIR:
 
         return eqir
 
-    def plot(self,
-             dir_path=None,
-             plot_recording=True,
-             plot_spectrogram=True,
-             plot_ir=True,
-             plot_fr=True,
-             plot_decay=True,
-             plot_waterfall=True,
-             close_plots=True):
-        """Plots all impulse responses."""
-        # Plot and save max limits
-        figs = dict()
-        for speaker, pair in self.irs.items():
-            if speaker not in figs:
-                figs[speaker] = dict()
-            for side, ir in pair.items():
-                fig = ir.plot(
-                    plot_recording=plot_recording,
-                    plot_spectrogram=plot_spectrogram,
-                    plot_ir=plot_ir,
-                    plot_fr=plot_fr,
-                    plot_decay=plot_decay,
-                    plot_waterfall=plot_waterfall
-                )
-                fig.suptitle(f'{speaker}-{side}')
-                figs[speaker][side] = fig
-
-        # Synchronize axes limits
-        plot_flags = [plot_recording, plot_ir, plot_decay, plot_spectrogram, plot_fr, plot_waterfall]
-        for r in range(2):
-            for c in range(3):
-                if not plot_flags[r * 3 + c]:
-                    continue
-                axes = []
-                for speaker, pair in figs.items():
-                    for side, fig in pair.items():
-                        axes.append(fig.get_axes()[r * 3 + c])
-                sync_axes(axes)
-
-        # Show write figures to files
-        if dir_path is not None:
-            os.makedirs(dir_path, exist_ok=True)
-            for speaker, pair in self.irs.items():
-                for side, ir in pair.items():
-                    file_path = os.path.join(dir_path, f'{speaker}-{side}.png')
-                    figs[speaker][side].savefig(file_path, bbox_inches='tight')
-                    # Optimize file size
-                    im = Image.open(file_path)
-                    im = im.convert('P', palette=Image.ADAPTIVE, colors=60)
-                    im.save(file_path, optimize=True)
-
-        # Close plots
-        if close_plots:
-            for speaker, pair in self.irs.items():
-                for side, ir in pair.items():
-                    plt.close(figs[speaker][side])
-
-        return figs
-
-    def plot_result(self, dir_path):
+    def plot_result_each(self, irs, dir_path):
         """Plot left and right side results with all impulse responses stacked
 
         Args:
@@ -479,7 +394,7 @@ class HRIR:
             None
         """
         stacks = [[], []]
-        for speaker, pair in self.irs.items():
+        for speaker, pair in irs.items():
             for i, ir in enumerate(pair.values()):
                 stacks[i].append(ir.data)
         left = ImpulseResponse(np.sum(np.vstack(stacks[0]), axis=0), self.fs)
@@ -488,16 +403,6 @@ class HRIR:
         right = ImpulseResponse(np.sum(np.vstack(stacks[1]), axis=0), self.fs)
         right_fr = right.frequency_response()
         right_fr.smoothen_fractional_octave(window_size=1 / 3, treble_f_lower=20000, treble_f_upper=23999)
-
-        # save impulse responses to wav file
-        write_wav(os.path.join(dir_path, 'left.wav'), left.fs, left.data)
-        write_wav(os.path.join(dir_path, 'right.wav'), right.fs, right.data)
-        np.savetxt(os.path.join(dir_path, 'left.txt'),
-                   np.vstack((left.frequency_response().frequency, left.frequency_response().raw)).T)
-        np.savetxt(os.path.join(dir_path, 'right.txt'),
-                   np.vstack((right.frequency_response().frequency, right.frequency_response().raw)).T)
-        np.savetxt(os.path.join(dir_path, 'diff.txt'),
-                   np.vstack((right.frequency_response().frequency, left.frequency_response().raw - right.frequency_response().raw)).T)
 
         fig, ax = plt.subplots()
         fig.set_size_inches(60, 45)
@@ -516,6 +421,10 @@ class HRIR:
         im = Image.open(file_path)
         im = im.convert('P', palette=Image.ADAPTIVE, colors=60)
         im.save(file_path, optimize=True)
+
+    def plot_result(self, dir_path):
+        self.plot_result_each(self.irs_l, dir_path)
+        self.plot_result_each(self.irs_r, dir_path)
 
     def equalize(self, fir):
         """Equalizes all impulse responses with given FIR filters.

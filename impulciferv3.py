@@ -10,10 +10,10 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from autoeq.frequency_response import FrequencyResponse
 from impulse_response_estimator import ImpulseResponseEstimator
-from hrir import HRIR
+from hrirv3 import HRIR
 from room_correction import room_correction
 from utils import sync_axes, save_fig_as_png
-from constants import SPEAKER_NAMES, SPEAKER_LIST_PATTERN, HESUVI_TRACK_ORDER, HEADPHONE_TRACK_ORDER
+from constants import SPEAKER_NAMES
 
 
 def main(dir_path=None,
@@ -34,10 +34,7 @@ def main(dir_path=None,
          tilt=0.0,
          do_room_correction=False,
          do_headphone_compensation=True,
-         do_equalization=True,
-         use_reference_channel=False,
-         channel_type='by_name',
-         silence_length=1.0):
+         do_equalization=True):
     """"""
     if dir_path is None or not os.path.isdir(dir_path):
         raise NotADirectoryError(f'Given dir path "{dir_path}"" is not a directory.')
@@ -69,7 +66,7 @@ def main(dir_path=None,
     hp_left, hp_right = None, None
     if do_headphone_compensation:
         print('Running headphone compensation...')
-        hp_left, hp_right = headphone_compensation(estimator, dir_path, silence_length=silence_length)
+        hp_left, hp_right = headphone_compensation(estimator, dir_path)
 
     # Equalization
     eq_left, eq_right = None, None
@@ -83,89 +80,65 @@ def main(dir_path=None,
 
     # HRIR measurements
     print('Opening binaural measurements...')
-    if channel_type == 'by_name':
-        hrir = open_binaural_measurements_by_name(estimator, dir_path, use_reference_channel, silence_length=silence_length)
-    if channel_type == 'brir_layer':
-        hrir = open_binaural_measurements_monos(estimator, r"[0-9]+", dir_path, use_reference_channel, silence_length=silence_length)
-    if channel_type == 'brir_random':
-        hrir = open_binaural_measurements_monos(estimator, r"[0-9,_-]+", dir_path, use_reference_channel, silence_length=silence_length)
-
-    if plot:
-        # Plot graphs pre processing
-        print('Plotting BRIR graphs before processing...')
-        hrir.plot(dir_path=os.path.join(dir_path, 'result\\plots', 'pre'))
+    hrir = open_binaural_measurements(estimator, dir_path)
 
     # Crop noise and harmonics from the beginning
     print('Cropping impulse responses...')
-    hrir.crop_heads(use_reference=use_reference_channel)
+    hrir.crop_heads()
 
     # Crop noise from the tail
     hrir.crop_tails()
 
     # Write multi-channel WAV file with sine sweeps for debugging
-    hrir.write_wav(os.path.join(dir_path, 'result\\all-speaker-responses.wav'))
+    # hrir.write_wav(os.path.join(dir_path, 'result\\all-speaker-responses.wav'))
 
     # Equalize all
     if do_headphone_compensation or do_room_correction or do_equalization:
         print('Equalizing...')
-        for speaker, pair in hrir.irs.items():
-            for side, ir in pair.items():
-                fr = FrequencyResponse(
-                    name=f'{speaker}-{side} eq',
-                    frequency=FrequencyResponse.generate_frequencies(f_step=1.01, f_min=10, f_max=estimator.fs / 2),
-                    raw=0, error=0
-                )
+        irs_list = [hrir.irs_l, hrir.irs_r]
+        for irs in irs_list:
+            for speaker, pair in irs.items():
+                for side, ir in pair.items():
+                    fr = FrequencyResponse(
+                        name=f'{speaker}-{side} eq',
+                        frequency=FrequencyResponse.generate_frequencies(f_step=1.01, f_min=10, f_max=estimator.fs / 2),
+                        raw=0, error=0
+                    )
 
-                if room_frs is not None and speaker in room_frs and side in room_frs[speaker]:
-                    # Room correction
-                    fr.error += room_frs[speaker][side].error
+                    if room_frs is not None and speaker in room_frs and side in room_frs[speaker]:
+                        # Room correction
+                        fr.error += room_frs[speaker][side].error
 
-                hp_eq = hp_left if side == 'left' else hp_right
-                if hp_eq is not None:
-                    # Headphone compensation
-                    fr.error += hp_eq.error_smoothed
+                    hp_eq = hp_left if side == 'left' else hp_right
+                    if hp_eq is not None:
+                        # Headphone compensation
+                        fr.error += hp_eq.error
 
-                eq = eq_left if side == 'left' else eq_right
-                if eq is not None and type(eq) == FrequencyResponse:
-                    # Equalization
-                    fr.error += eq.error
+                    eq = eq_left if side == 'left' else eq_right
+                    if eq is not None and type(eq) == FrequencyResponse:
+                        # Equalization
+                        fr.error += eq.error
 
-                # Remove bass and tilt target from the error
-                fr.error -= target.raw
+                    # Remove bass and tilt target from the error
+                    fr.error -= target.raw
 
-                # Smoothen and equalize
-                fr.smoothen_heavy_light()
-                fr.equalize(max_gain=40, treble_f_lower=10000, treble_f_upper=estimator.fs / 2)
+                    # Smoothen and equalize
+                    fr.smoothen_heavy_light()
+                    fr.equalize(max_gain=40, treble_f_lower=10000, treble_f_upper=estimator.fs / 2)
 
-                # Create FIR filter and equalize
-                fir = fr.minimum_phase_impulse_response(fs=estimator.fs, normalize=False, f_res=5)
-                ir.equalize(fir)
+                    # Create FIR filter and equalize
+                    fir = fr.minimum_phase_impulse_response(fs=estimator.fs, normalize=False, f_res=5)
+                    ir.equalize(fir)
 
     # Adjust decay time
     if decay:
         print('Adjusting decay time...')
-        for speaker, pair in hrir.irs.items():
-            for side, ir in pair.items():
-                if speaker in decay:
-                    ir.adjust_decay(decay[speaker])
-
-    # Correct channel balance
-    if channel_balance is not None:
-        print('Correcting channel balance...')
-        hrir.correct_channel_balance(channel_balance)
-
-    # Normalize gain
-    print('Normalizing gain...')
-    hrir.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
-
-    if plot:
-        print('Plotting BRIR graphs after processing...')
-        # Convolve test signal, re-plot waveform and spectrogram
-        for speaker, pair in hrir.irs.items():
-            for side, ir in pair.items():
-                ir.recording = ir.convolve(estimator.test_signal)
-        # Plot post processing
-        hrir.plot(os.path.join(dir_path, 'result\\plots', 'post'))
+        irs_list = [hrir.irs_l, hrir.irs_r]
+        for irs in irs_list:
+            for speaker, pair in irs.items():
+                for side, ir in pair.items():
+                    if speaker in decay:
+                        ir.adjust_decay(decay[speaker])
 
     # Plot results, always
     print('Plotting results...')
@@ -181,7 +154,6 @@ def main(dir_path=None,
             hrir_result = hrir.copy()
             # Re-sample
             hrir_result.resample(s)
-            hrir_result.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
         # Write multi-channel WAV file with standard track order
         print(f'Writing BRIRs @ {s}Hz ...')
         result_path = os.path.join(dir_path, 'result', str(int(s / 1000)))
@@ -262,12 +234,12 @@ def equalization(estimator, dir_path):
         if left_fr == right_fr:
             # Both are the same, plot only one graph
             fig, ax = plt.subplots()
-            fig.set_size_inches(60, 45)
+            fig.set_size_inches(12, 9)
             left_fr.plot_graph(fig=fig, ax=ax, show=False)
         else:
             # Left and right are different, plot two graphs in the same figure
             fig, ax = plt.subplots(1, 2)
-            fig.set_size_inches(110, 45)
+            fig.set_size_inches(22, 9)
             if left_fr is not None:
                 left_fr.plot_graph(fig=fig, ax=ax[0], show=False)
             if right_fr is not None:
@@ -277,11 +249,38 @@ def equalization(estimator, dir_path):
     return left_fr, right_fr
 
 
-def headphone_plot(left, right, path):
+def headphone_compensation(estimator, dir_path):
+    """Equalizes HRIR tracks with headphone compensation measurement.
+
+    Args:
+        estimator: ImpulseResponseEstimator instance
+        dir_path: Path to output directory
+
+    Returns:
+        None
+    """
+    # Read WAV file
+    hp_irs = HRIR(estimator)
+    hp_irs.open_recording(os.path.join(dir_path, 'headphones.wav'), speakers=['FL', 'FR'])
+    hp_irs.write_wav(os.path.join(dir_path, 'result\\headphone-responses.wav'))
+
+    # Frequency responses
+    left = hp_irs.irs['FL']['left'].frequency_response()
+    right = hp_irs.irs['FR']['right'].frequency_response()
+
+    # Center by left channel
+    gain = left.center([100, 10000])
+    right.raw += gain
+
+    # Compensate
+    zero = FrequencyResponse(name='zero', frequency=left.frequency, raw=np.zeros(len(left.frequency)))
+    left.compensate(zero, min_mean_error=False)
+    right.compensate(zero, min_mean_error=False)
+
     # Headphone plots
     fig = plt.figure()
     gs = fig.add_gridspec(2, 3)
-    fig.set_size_inches(110, 45)
+    fig.set_size_inches(22, 10)
     fig.suptitle('Headphones')
 
     # Left
@@ -301,11 +300,11 @@ def headphone_plot(left, right, path):
     gain_l = _left.center([100, 10000])
     gain_r = _right.center([100, 10000])
     ax = fig.add_subplot(gs[:, 1:])
-    ax.plot(_left.frequency, _left.error_smoothed, linewidth=1, color='#1f77b4')
-    ax.plot(_right.frequency, _right.error_smoothed, linewidth=1, color='#d62728')
-    ax.plot(_left.frequency, _left.error_smoothed - _right.error_smoothed, linewidth=1, color='#680fb9')
+    ax.plot(_left.frequency, _left.raw, linewidth=1, color='#1f77b4')
+    ax.plot(_right.frequency, _right.raw, linewidth=1, color='#d62728')
+    ax.plot(_left.frequency, _left.raw - _right.raw, linewidth=1, color='#680fb9')
     sl = np.logical_and(_left.frequency > 20, _left.frequency < 20000)
-    stack = np.vstack([_left.error_smoothed[sl], _right.error_smoothed[sl], _left.error_smoothed[sl] - _right.error_smoothed[sl]])
+    stack = np.vstack([_left.raw[sl], _right.raw[sl], _left.raw[sl] - _right.raw[sl]])
     ax.set_ylim([np.min(stack) * 1.1, np.max(stack) * 1.1])
     axl.set_ylim([np.min(stack) * 1.1, np.max(stack) * 1.1])
     axr.set_ylim([np.min(stack) * 1.1, np.max(stack) * 1.1])
@@ -320,58 +319,10 @@ def headphone_plot(left, right, path):
     ax.xaxis.set_major_formatter(ticker.StrMethodFormatter('{x:.0f}'))
 
     # Save headphone plots
-    save_fig_as_png(path, fig)
+    file_path = os.path.join(dir_path, 'result\\plots', 'headphones.png')
+    os.makedirs(os.path.split(file_path)[0], exist_ok=True)
+    save_fig_as_png(file_path, fig)
     plt.close(fig)
-
-def headphone_compensation(estimator, dir_path, silence_length=1.0):
-    """Equalizes HRIR tracks with headphone compensation measurement.
-
-    Args:
-        estimator: ImpulseResponseEstimator instance
-        dir_path: Path to output directory
-
-    Returns:
-        None
-    """
-    # Read WAV file
-    hp_irs = HRIR(estimator)
-    hp_irs.open_recording(os.path.join(dir_path, 'headphones.wav'), speakers=['FL', 'FR'], silence_length=silence_length)
-    hp_irs.write_wav(os.path.join(dir_path, 'result\\headphone-responses.wav'), track_order=HEADPHONE_TRACK_ORDER)
-
-    # Frequency responses
-    left = hp_irs.irs['FL']['left'].frequency_response()
-    right = hp_irs.irs['FR']['right'].frequency_response()
-
-    hp_fig_path = os.path.join(dir_path, 'result\\plots')
-    os.makedirs(hp_fig_path, exist_ok=True)
-    # Center by left channel
-    gain = left.center([100, 10000])
-    right.raw += gain
-
-    # Compensate
-    zero = FrequencyResponse(name='zero', frequency=left.frequency, raw=np.zeros(len(left.frequency)))
-    left.compensate(zero, min_mean_error=False)
-    right.compensate(zero, min_mean_error=False)
-
-    # left.smoothen_heavy_light()
-    # right.smoothen_heavy_light()
-    left.smoothen_fractional_octave(
-        window_size=1 / 3,
-        iterations=1,
-        treble_f_lower=4000,
-        treble_f_upper=20000,
-        treble_window_size=1.3,
-        treble_iterations=1
-    )
-    right.smoothen_fractional_octave(
-        window_size=1 / 3,
-        iterations=1,
-        treble_f_lower=4000,
-        treble_f_upper=20000,
-        treble_window_size=1.3,
-        treble_iterations=1
-    )
-    headphone_plot(left, right, os.path.join(hp_fig_path, 'headphones.png'))
 
     return left, right
 
@@ -398,35 +349,10 @@ def create_target(estimator, bass_boost_gain, bass_boost_fc, bass_boost_q, tilt)
     return target
 
 
-def open_binaural_measurements_by_name(estimator, dir_path, use_reference=False, silence_length=1.0):
+def open_binaural_measurements(estimator, dir_path):
     """Opens binaural measurement WAV files.
 
     Args:
-        estimator: ImpulseResponseEstimator
-        dir_path: Path to directory
-
-    Returns:
-        HRIR instance
-    """
-    hrir = HRIR(estimator)
-    pattern = r'^{pattern}\.wav$'.format(pattern=SPEAKER_LIST_PATTERN)  # FL,FR.wav
-    for file_name in [f for f in os.listdir(dir_path) if re.match(pattern, f)]:
-        # Read the speaker names from the file name into a list
-        speakers = re.search(SPEAKER_LIST_PATTERN, file_name)[0].split(',')
-        # Form absolute path
-        file_path = os.path.join(dir_path, file_name)
-        # Open the file and add tracks to HRIR
-        hrir.open_recording(file_path, speakers=speakers, silence_length=silence_length)
-    if len(hrir.irs) == 0:
-        raise ValueError('No HRIR recordings found in the directory.')
-    return hrir
-
-
-def open_binaural_measurements_monos(estimator, indexPattern, dir_path, use_reference=False, silence_length=1.0):
-    """Opens binaural measurement WAV files.
-
-    Args:
-        silence_length:
         estimator: ImpulseResponseEstimator
         dir_path: Path to directory
 
@@ -435,6 +361,7 @@ def open_binaural_measurements_monos(estimator, indexPattern, dir_path, use_refe
     """
     hrir = HRIR(estimator)
     pattern = r'.*\.wav$'
+    indexPattern = r"[0-9,_-]+"
     for file_name in [f for f in os.listdir(dir_path)]:
         if re.match(pattern, file_name):
             # Read the speaker names from the file name into a list
@@ -443,8 +370,8 @@ def open_binaural_measurements_monos(estimator, indexPattern, dir_path, use_refe
                 # Form absolute path
                 file_path = os.path.join(dir_path, file_name)
                 # Open the file and add tracks to HRIR
-                hrir.open_recording(file_path, speakers=[speakers[0]], use_reference=use_reference, silence_length=silence_length)
-    if len(hrir.irs) == 0:
+                hrir.open_recording(file_path, speaker=speakers[0], silence_length=1)
+    if len(hrir.irs_l) == 0:
         raise ValueError('No HRIR recordings found in the directory.')
     return hrir
 
@@ -586,12 +513,6 @@ def create_cli():
                                  'frequency response. 1 dB/octave will produce nearly 10 dB difference in '
                                  'desired value between 20 Hz and 20 kHz. Tilt is applied with bass boost and both '
                                  'will affect the bass gain.')
-    arg_parser.add_argument('--use_reference_channel', type=bool, default=argparse.SUPPRESS,
-                            help='')
-    arg_parser.add_argument('--channel_type', type=str, default=argparse.SUPPRESS,
-                            help='')
-    arg_parser.add_argument('--silence_length', type=float, default=argparse.SUPPRESS,
-                            help='')
     args = vars(arg_parser.parse_args())
     if 'bass_boost' in args:
         bass_boost = args['bass_boost'].split(',')

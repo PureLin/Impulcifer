@@ -149,19 +149,18 @@ def play_and_record(
         input_device=None,
         output_device=None,
         host_api=None,
-        input_mapping=None,
-        output_mapping=None):
+        input_mapping="1,2",
+        output_mapping="1,2"):
     """Plays one file and records another at the same time
 
     Args:
+        output_mapping:
+        input_mapping:
         play: File path to playback file
         record: File path to output recording file
         input_device: Number of the input device as seen by sounddevice
         output_device: Number of the output device as seen by sounddevice
         host_api: Host API name
-        channels: Number of output channels
-        append: Add track(s) to an existing file? Silence will be added to end of each track to make all equal in
-                length
 
     Returns:
         None
@@ -186,8 +185,13 @@ def play_and_record(
     print(f'Input device:  "{input_device_str}"')
     print(f'Output device: "{output_device_str}"')
 
-    recording = sd.playrec(np.transpose(data), input_mapping=input_mapping,
-                           output_mapping=output_mapping, blocking=True, samplerate=fs)
+    # convert input/output_mapping from text to int array
+    input_mapping_array = input_mapping.split(",")
+    input_mapping_array = [int(x) for x in input_mapping_array]
+    output_mapping_array = output_mapping.split(",")
+    output_mapping_array = [int(x) for x in output_mapping_array]
+    recording = sd.playrec(np.transpose(data), input_mapping=input_mapping_array,
+                           output_mapping=output_mapping_array, blocking=True, samplerate=fs)
     recording = np.transpose(recording)
     max_gain = 20 * np.log10(np.max(np.abs(recording)))
     write_wav(record, fs, recording)
@@ -223,10 +227,16 @@ def create_cli():
                                  'are: "MME", "DirectSound" and "WASAPI". This is used when input and '
                                  'output devices have not been specified (using system defaults) or if they have no '
                                  'host API specified.')
-    arg_parser.add_argument('--channels', type=int, default=2, help='Number of output channels.')
-    arg_parser.add_argument('--append', action='store_true',
-                            help='Add track(s) to existing file? Silence will be added to the end of all tracks to '
-                                 'make the equal in length.')
+    arg_parser.add_argument('--input_mapping', type=str, default=argparse.SUPPRESS,
+                            help='Host API name to prefer for input and output devices. Supported options on Windows '
+                                 'are: "MME", "DirectSound" and "WASAPI". This is used when input and '
+                                 'output devices have not been specified (using system defaults) or if they have no '
+                                 'host API specified.')
+    arg_parser.add_argument('--output_mapping', type=str, default=argparse.SUPPRESS,
+                            help='Host API name to prefer for input and output devices. Supported options on Windows '
+                                 'are: "MME", "DirectSound" and "WASAPI". This is used when input and '
+                                 'output devices have not been specified (using system defaults) or if they have no '
+                                 'host API specified.')
     args = vars(arg_parser.parse_args())
     return args
 

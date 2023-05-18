@@ -28,7 +28,7 @@ class ImpulseResponseEstimator(object):
         # start and end frequencies
         self.low = 5
         self.n_octaves = np.ceil(np.log2(self.high / self.low))  # P
-        self.low = self.high / 2**self.n_octaves
+        self.low = self.high / 2 ** self.n_octaves
 
         # Total length in samples
         self.w1 = self.low / self.fs * 2 * np.pi
@@ -74,12 +74,12 @@ class ImpulseResponseEstimator(object):
 
         # Now we have to normalize energy of result of dot product.
         # This is "naive" method but it just works.
-        frp = fft(convolve(inverse_filter, self.test_signal, method='auto'))
-        inverse_filter /= np.abs(frp[round(frp.shape[0]/4)])
-
+        # frp = fft(convolve(inverse_filter, self.test_signal, method='auto'))
+        # inverse_filter /= (np.abs(frp[round(frp.shape[0] / 4)]) / 4)
+        inverse_filter /= 8192
         return inverse_filter
 
-    def generate_test_signal(self, min_duration, fade_in=1/2, fade_out=None):
+    def generate_test_signal(self, min_duration, fade_in=1 / 2, fade_out=None):
         """Generates test signal.
 
         Simultaneous Measurement of Impulse Response and Distortion with a Swept-Sine Technique.
@@ -107,12 +107,12 @@ class ImpulseResponseEstimator(object):
         # M is a length multiplier
         # See equation 2 in Garai and Guidorzi 2015
         # Here it's selected such that the test signal duration is equal or greater than minimum duration
-        M = np.ceil(min_duration * self.fs * (np.pi / 2**P) / (np.pi * 2 * np.log(2**P)))
+        M = np.ceil(min_duration * self.fs * (np.pi / 2 ** P) / (np.pi * 2 * np.log(2 ** P)))
         # L is the real number length of the test signal in samples
-        L = M * np.pi * 2 * np.log(2**P) / (np.pi / 2**P)
+        L = M * np.pi * 2 * np.log(2 ** P) / (np.pi / 2 ** P)
         # N is the actual length of the test signal in samples
         N = np.round(L)
-        freqs = np.pi / 2**P * L / np.log(2**P) * np.exp(np.arange(N) / N * np.log(2**P))
+        freqs = np.pi / 2 ** P * L / np.log(2 ** P) * np.exp(np.arange(N) / N * np.log(2 ** P))
         test_signal = np.sin(freqs)
 
         seconds_per_octave = N / self.fs / P
@@ -149,7 +149,7 @@ class ImpulseResponseEstimator(object):
         """Estimates impulse response"""
         return convolve(recording, self.inverse_filter, mode='same', method='auto')
 
-    def sweep_sequence(self, speakers, tracks):
+    def sweep_sequence(self, speakers, tracks, silence_length=1.0):
         """Creates sine sweep sequence data with multiple tracks
 
         Output depends on the speakers and tracks in a way that speakers define which physical speakers will should be
@@ -208,10 +208,11 @@ class ImpulseResponseEstimator(object):
         speaker_indices = [standard_order.index(ch) for ch in speakers]
 
         # Create test signal sequence
-        data = np.zeros((n_tracks, int((self.fs * 2.0 + len(self)) * len(speakers) + self.fs * 2.0)))
+        data = np.zeros(
+            (n_tracks, int((self.fs * silence_length + len(self)) * len(speakers) + self.fs * silence_length)))
         for i, speaker in enumerate(speakers):
-            start_zeros = int((self.fs * 2.0 + len(self)) * i + self.fs * 2.0)
-            end_zeros = int((self.fs * 2.0 + len(self)) * (len(speakers) - i - 1) + self.fs * 2.0)
+            start_zeros = int((self.fs * silence_length + len(self)) * i + self.fs * silence_length)
+            end_zeros = int((self.fs * silence_length + len(self)) * (len(speakers) - i - 1) + self.fs * silence_length)
             sweep_padded = np.concatenate([
                 np.zeros((start_zeros,)),
                 self.test_signal,

@@ -1,11 +1,9 @@
 import datetime
 import os
-import re
 import shutil
 import tkinter
 from tkinter import *
 from tkinter.filedialog import askdirectory, askopenfilename, asksaveasfilename
-from tkinter.messagebox import showinfo
 
 import sounddevice
 
@@ -142,7 +140,7 @@ def pack(widget, samerow=False):
 # RECORDER WINDOW
 root = Tk()
 
-root.title('12 Channel BRIR QuickCreate')
+root.title('2 Channel BRIR QuickCreate')
 root.resizable(False, False)
 canvas1 = Canvas(root)
 
@@ -216,13 +214,24 @@ host_api_optionmenu = OptionMenu(canvas1, host_api, value=None, command=refresh1
 pack(host_api_optionmenu, samerow=True)
 
 # sound file to play
-pack(Label(canvas1, text='File to play'))
-play = StringVar(value=os.path.join('NewData2', 'sweep-seg-FL-stereo-3.08s-48000Hz-32bit-2.93Hz-24000Hz.wav'))
-play_entry = Entry(canvas1, textvariable=play, width=70)
-pack(play_entry)
-pack(Button(canvas1, text='...', command=lambda: openfile(play, (('Audio files', '*.wav'), ('All files', '*.*')))),
+pack(Label(canvas1, text='File to play L'))
+play_l = StringVar(value=os.path.join('NewData2', 'sweep-seg-FL-stereo-3.08s-48000Hz-32bit-2.93Hz-24000Hz.wav'))
+play_entry_l = Entry(canvas1, textvariable=play_l, width=70)
+pack(play_entry_l)
+pack(Button(canvas1, text='...', command=lambda: openfile(play_l, (('Audio files', '*.wav'), ('All files', '*.*')))),
      samerow=True)
-
+pack(Label(canvas1, text='File to play R'))
+play_r = StringVar(value=os.path.join('NewData2', 'sweep-seg-FR-stereo-3.08s-48000Hz-32bit-2.93Hz-24000Hz.wav'))
+play_entry_r = Entry(canvas1, textvariable=play_r, width=70)
+pack(play_entry_r)
+pack(Button(canvas1, text='...', command=lambda: openfile(play_r, (('Audio files', '*.wav'), ('All files', '*.*')))),
+     samerow=True)
+pack(Label(canvas1, text='File for test'))
+test = StringVar(value=os.path.join('NewData2', 'sweep-3.08s-48000Hz-32bit-2.93Hz-24000Hz.wav'))
+test_entry = Entry(canvas1, textvariable=test, width=70)
+pack(test_entry)
+pack(Button(canvas1, text='...', command=lambda: openfile(test, (('Audio files', '*.wav'), ('All files', '*.*')))),
+     samerow=True)
 pack(Label(canvas1, text='Headphone File to play'))
 hp_play = StringVar(value=os.path.join('NewData2', 'sweep-seg-FL,FR-stereo-3.08s-48000Hz-32bit-2.93Hz-24000Hz.wav'))
 hp_play_entry = Entry(canvas1, textvariable=hp_play, width=70)
@@ -266,17 +275,20 @@ def recordaction():
         input_map = str(inputVar.get()) + "," + str(inputVar.get() + 1)
         if inputVar2.get() != 0:
             input_map += ("," + str(5))
-        recorder.play_and_record(play=play_entry.get(),
-                                 record=record_entry.get() + "/" + str(layer.get()) + "/" + str(
-                                     position.get()) + ".wav",
+        recorder.play_and_record(play=play_l.get(),
+                                 record=record_entry.get() + "//FL.wav",
                                  input_device=input_device.get(),
                                  output_device=output_device.get(),
                                  host_api=host_api.get(),
                                  output_mapping=str(speakerVar.get()) + "," + str(speakerVar.get() + 1),
                                  input_mapping=input_map)
-        posVar.set((posVar.get() + 1) % 12)
-        if posVar.get() == 0:
-            layVar.set((layVar.get() + 1) % 5)
+        recorder.play_and_record(play=play_r.get(),
+                                 record=record_entry.get() + "//FR.wav",
+                                 input_device=input_device.get(),
+                                 output_device=output_device.get(),
+                                 host_api=host_api.get(),
+                                 output_mapping=str(speakerVar.get()) + "," + str(speakerVar.get() + 1),
+                                 input_mapping=input_map)
     finally:
         main_button.config(state='normal')
 
@@ -300,30 +312,15 @@ def start_impulcifer():
     do_headphone_compensation = False
     if os.path.exists(temp_dir + "/headphones.wav"):
         do_headphone_compensation = True
+    # move test file to temp dir
+    shutil.copy(test_entry.get(), temp_dir + "/test.wav")
     if not os.path.exists(temp_dir + "/test.wav"):
         errorLabel.config(text="test.wav not exist")
         return
-    for i in range(0, 5):
-        if os.path.exists(temp_dir + "/" + str(i)):
-            shutil.copyfile(temp_dir + "/headphones.wav", temp_dir + "/" + str(i) + "/headphones.wav")
-            shutil.copyfile(temp_dir + "/test.wav", temp_dir + "/" + str(i) + "/test.wav")
-            impulcifer.main(dir_path=temp_dir + "/" + str(i),
-                            channel_type="brir_layer",
-                            do_headphone_compensation=do_headphone_compensation,
-                            use_reference_channel=inputVar2.get() != 0)
-            shutil.move(temp_dir + "/" + str(i) + "/result/48", temp_dir + "/BRIR/" + str(i) + "/")
+    impulcifer.main(dir_path=temp_dir, channel_type="by_name",
+                    do_headphone_compensation=do_headphone_compensation,
+                    use_reference_channel=inputVar2.get() != 0)
 
-
-pack(Label(canvas1, text='Position'))
-posVar = IntVar()
-posVar.set(0)
-position = Spinbox(canvas1, textvariable=posVar, from_=0, to=11)
-pack(position, True)
-pack(Label(canvas1, text='Layer'), True)
-layVar = IntVar()
-layVar.set(2)
-layer = Spinbox(canvas1, textvariable=layVar, from_=0, to=4)
-pack(layer, True)
 
 main_button = Button(canvas1, text='Record ', command=recordaction)
 pack(main_button)
