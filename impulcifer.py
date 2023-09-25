@@ -37,7 +37,10 @@ def main(dir_path=None,
          do_equalization=True,
          use_reference_channel=False,
          channel_type='by_name',
-         silence_length=1.0):
+         silence_length=1.0,
+         normalize_gain=True,
+         default_gain=6,
+         gain_on_open_file=6):
     """"""
     if dir_path is None or not os.path.isdir(dir_path):
         raise NotADirectoryError(f'Given dir path "{dir_path}"" is not a directory.')
@@ -50,6 +53,7 @@ def main(dir_path=None,
     # Impulse response estimator
     print('Creating impulse response estimator...')
     estimator = open_impulse_response_estimator(dir_path, file_path=test_signal)
+    estimator_hp = open_impulse_response_estimator(dir_path, file_path=test_signal, is_headphone=True)
 
     # Room correction frequency responses
     room_frs = None
@@ -69,7 +73,7 @@ def main(dir_path=None,
     hp_left, hp_right = None, None
     if do_headphone_compensation:
         print('Running headphone compensation...')
-        hp_left, hp_right = headphone_compensation(estimator, dir_path, silence_length=silence_length)
+        hp_left, hp_right = headphone_compensation(estimator_hp, dir_path, silence_length=silence_length)
 
     # Equalization
     eq_left, eq_right = None, None
@@ -89,6 +93,10 @@ def main(dir_path=None,
         hrir = open_binaural_measurements_monos(estimator, r"[0-9]+", dir_path, use_reference_channel, silence_length=silence_length)
     if channel_type == 'brir_random':
         hrir = open_binaural_measurements_monos(estimator, r"[0-9,_-]+", dir_path, use_reference_channel, silence_length=silence_length)
+
+    for speaker, pair in hrir.irs.items():
+        for ir in pair.values():
+            ir.data *= 10 ** (gain_on_open_file / 20)
 
     if plot:
         # Plot graphs pre processing
@@ -135,7 +143,7 @@ def main(dir_path=None,
 
                 # Smoothen and equalize
                 fr.smoothen_heavy_light()
-                fr.equalize(max_gain=40, treble_f_lower=10000, treble_f_upper=estimator.fs / 2)
+                fr.equalize(max_gain=40, window_size=1 / 6, treble_window_size=1 / 6, treble_f_lower=10000, treble_f_upper=estimator.fs / 2)
 
                 # Create FIR filter and equalize
                 fir = fr.minimum_phase_impulse_response(fs=estimator.fs, normalize=False, f_res=5)
@@ -155,8 +163,13 @@ def main(dir_path=None,
         hrir.correct_channel_balance(channel_balance)
 
     # Normalize gain
-    print('Normalizing gain...')
-    hrir.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
+    if normalize_gain:
+        print('Normalizing gain...')
+        hrir.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
+    else:
+        for speaker, pair in hrir.irs.items():
+            for ir in pair.values():
+                ir.data *= 10 ** (default_gain / 20)
 
     if plot:
         print('Plotting BRIR graphs after processing...')
@@ -181,7 +194,6 @@ def main(dir_path=None,
             hrir_result = hrir.copy()
             # Re-sample
             hrir_result.resample(s)
-            hrir_result.normalize(peak_target=None if target_level is not None else -0.1, avg_target=target_level)
         # Write multi-channel WAV file with standard track order
         print(f'Writing BRIRs @ {s}Hz ...')
         result_path = os.path.join(dir_path, 'result', str(int(s / 1000)))
@@ -191,7 +203,7 @@ def main(dir_path=None,
     print(f'Finish!')
 
 
-def open_impulse_response_estimator(dir_path, file_path=None):
+def open_impulse_response_estimator(dir_path, file_path=None, is_headphone=False):
     """Opens impulse response estimator from a file
 
     Args:
@@ -209,7 +221,7 @@ def open_impulse_response_estimator(dir_path, file_path=None):
             file_path = os.path.join(dir_path, 'test.wav')
     if re.match(r'^.+\.wav$', file_path, flags=re.IGNORECASE):
         # Test signal is WAV file
-        estimator = ImpulseResponseEstimator.from_wav(file_path)
+        estimator = ImpulseResponseEstimator.from_wav(file_path, is_headphone=is_headphone)
     elif re.match(r'^.+\.pkl$', file_path, flags=re.IGNORECASE):
         # Test signal is Pickle file
         estimator = ImpulseResponseEstimator.from_pickle(file_path)
@@ -323,6 +335,7 @@ def headphone_plot(left, right, path):
     save_fig_as_png(path, fig)
     plt.close(fig)
 
+
 def headphone_compensation(estimator, dir_path, silence_length=1.0):
     """Equalizes HRIR tracks with headphone compensation measurement.
 
@@ -360,16 +373,16 @@ def headphone_compensation(estimator, dir_path, silence_length=1.0):
         iterations=1,
         treble_f_lower=4000,
         treble_f_upper=20000,
-        treble_window_size=1.3,
-        treble_iterations=1
+        treble_window_size=1 / 2,
+        treble_iterations=2
     )
     right.smoothen_fractional_octave(
         window_size=1 / 3,
         iterations=1,
         treble_f_lower=4000,
         treble_f_upper=20000,
-        treble_window_size=1.3,
-        treble_iterations=1
+        treble_window_size=1 / 2,
+        treble_iterations=2
     )
     headphone_plot(left, right, os.path.join(hp_fig_path, 'headphones.png'))
 
@@ -388,13 +401,6 @@ def create_target(estimator, bass_boost_gain, bass_boost_fc, bass_boost_q, tilt)
         bass_boost_q=bass_boost_q,
         tilt=tilt
     )
-    high_pass = FrequencyResponse(
-        name='high_pass',
-        frequency=[10, 18, 19, 20, 21, 22, 20000],
-        raw=[-80, -5, -1.6, -0.6, -0.2, 0, 0]
-    )
-    high_pass.interpolate(f_min=10, f_max=estimator.fs / 2, f_step=1.01)
-    target.raw += high_pass.raw
     return target
 
 

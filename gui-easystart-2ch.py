@@ -320,6 +320,7 @@ def start_impulcifer():
     impulcifer.main(dir_path=temp_dir, channel_type="by_name",
                     do_headphone_compensation=do_headphone_compensation,
                     use_reference_channel=inputVar2.get() != 0)
+    os.startfile(temp_dir)
 
 
 main_button = Button(canvas1, text='Record ', command=recordaction)

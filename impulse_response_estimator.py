@@ -18,7 +18,7 @@ class ImpulseResponseEstimator(object):
     Angelo Farina
     """
 
-    def __init__(self, min_duration=5.0, fs=44100):
+    def __init__(self, min_duration=5.0, fs=44100, is_headphone=False):
         if fs != int(fs):
             raise ValueError('Sampling rate "fs" must be an integer.')
         self.fs = int(fs)
@@ -39,7 +39,7 @@ class ImpulseResponseEstimator(object):
         self.duration = len(self.test_signal) / self.fs
 
         # Generate inverse filter
-        self.inverse_filter = self.generate_inverse_filter()
+        self.inverse_filter = self.generate_inverse_filter(is_headphone)
 
     def __len__(self):
         return len(self.test_signal)
@@ -62,7 +62,7 @@ class ImpulseResponseEstimator(object):
         plt.grid(True)
         plt.show()
 
-    def generate_inverse_filter(self):
+    def generate_inverse_filter(self, is_headphone):
         """Generates inverse filter for test signal.
 
         Returns:
@@ -70,7 +70,10 @@ class ImpulseResponseEstimator(object):
         """
         P = self.n_octaves
         N = len(self.test_signal)
-        inverse_filter = np.flip(self.test_signal) * (2**(P / N))**(np.arange(N)*-1) * P * np.log(2) / (1 - 2**-P)
+        if is_headphone:
+            inverse_filter = np.flip(self.test_signal) * (2 ** (P / N)) ** (np.arange(N) * -0.2) * P * np.log(2) / (1 - 2 ** -P)
+        else:
+            inverse_filter = np.copy(np.flip(self.test_signal))
 
         # Now we have to normalize energy of result of dot product.
         # This is "naive" method but it just works.
@@ -224,10 +227,10 @@ class ImpulseResponseEstimator(object):
         return data
 
     @classmethod
-    def from_wav(cls, file_path):
+    def from_wav(cls, file_path, is_headphone=False):
         """Creates ImpulseResponseEstimator instance from test signal WAV."""
         fs, data = read_wav(file_path)
-        ire = cls(min_duration=(len(data) - 1) / fs, fs=fs)
+        ire = cls(min_duration=(len(data) - 1) / fs, fs=fs, is_headphone=is_headphone)
         if np.max(ire.test_signal - data) > 1e-9:
             raise ValueError('Data read from WAV file does not match generated test signal. WAV file must be generated '
                              'with the current version of ImpulseResponseEstimator.')

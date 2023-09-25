@@ -246,7 +246,7 @@ class HRIR:
         lengths = []
         for speaker, pair in self.irs.items():
             for side, ir in pair.items():
-                _, tail_ind, _, _ = ir.decay_params()
+                peak_index, tail_ind, noise_floor, w = ir.decay_params()
                 tail_indices.append(tail_ind)
                 lengths.append(len(ir))
 
