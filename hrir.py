@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 import math
 import os
-import sys
-import warnings
-import numpy as np
+
 import matplotlib.pyplot as plt
-from scipy import signal, fftpack
+import numpy as np
 from PIL import Image
 from autoeq.frequency_response import FrequencyResponse
-from impulse_response import ImpulseResponse
-from utils import read_wav, write_wav, magnitude_response, sync_axes, versus_distance
-from constants import SPEAKER_NAMES, SPEAKER_DELAYS, HEXADECAGONAL_TRACK_ORDER
+from scipy import signal, fftpack
 from scipy.signal.windows import hann
+
+from constants import HEXADECAGONAL_TRACK_ORDER
+from impulse_response import ImpulseResponse
+from utils import read_wav, write_wav, magnitude_response, sync_axes
 
 
 class HRIR:
